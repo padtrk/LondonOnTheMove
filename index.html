@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>London Marauder's Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; background: #0b0e11; }
+        #map { width: 100vw; height: 100vh; }
+        .legend {
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
+            background: rgba(30, 30, 30, 0.9); color: #f0e68c;
+            padding: 12px; border-radius: 8px; font-family: serif; border: 1px solid #555;
+        }
+    </style>
+</head>
+<body>
+
+<div class="legend">
+    <b>The Marauder's Map</b><br>
+    <span style="color:#e10600">●</span> Bus 26<br>
+    <span style="color:#ef7b10">●</span> Overground (Windrush)<br>
+    <span style="color:#9364cc">●</span> Elizabeth Line
+</div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map', { zoomControl: false }).setView([51.53, -0.07], 14);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+    const transportLayer = L.layerGroup().addTo(map);
+
+    async function updateMap() {
+        transportLayer.clearLayers();
+        console.log("Locating travelers...");
+
+        // 1. Bus 26 (Fetch via Vehicle ID for real GPS)
+        fetchData('https://api.tfl.gov.uk/Line/26/Arrivals', '#e10600', 'Bus 26');
+
+        // 2. Overground - Specifically the "Windrush" line (H&I to Dalston/Haggerston)
+        fetchData('https://api.tfl.gov.uk/Line/windrush/Arrivals', '#ef7b10', 'Overground');
+
+        // 3. Elizabeth Line
+        fetchData('https://api.tfl.gov.uk/Line/elizabeth/Arrivals', '#9364cc', 'Elizabeth Line');
+    }
+
+    async function fetchData(url, color, label) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) return;
+            const data = await response.json();
+
+            const seen = new Set();
+            data.forEach(item => {
+                // Defensive check: must have coordinates and be a unique vehicle
+                if (item.latitude && item.longitude && !seen.has(item.vehicleId)) {
+                    seen.add(item.vehicleId);
+                    
+                    L.circleMarker([item.latitude, item.longitude], {
+                        radius: label.includes('Bus') ? 6 : 9,
+                        fillColor: color,
+                        color: "#fff",
+                        weight: 2,
+                        fillOpacity: 0.9
+                    }).addTo(transportLayer).bindTooltip(`${label}: ${item.currentLocation}`);
+                }
+            });
+            console.log(`Found ${seen.size} ${label} vehicles.`);
+        } catch (e) {
+            console.error(`Error fetching ${label}:`, e);
+        }
+    }
+
+    updateMap();
+    setInterval(updateMap, 30000); // 30s heartbeat
+</script>
+</body>
+</html>
