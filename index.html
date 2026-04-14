@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>London Marauder's Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; background: #1a1a1a; }
+        #map { width: 100vw; height: 100vh; filter: grayscale(0.5) contrast(1.2); }
+        .legend {
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
+            background: rgba(40, 40, 40, 0.9); color: #f0e68c;
+            padding: 15px; border: 2px solid #8b4513; font-family: "Georgia", serif;
+            border-radius: 5px; box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; border: 1px solid white; }
+    </style>
+</head>
+<body>
+
+<div class="legend">
+    <b style="font-size: 1.2em;">Transport Marauder's Map</b><br><br>
+    <span class="dot" style="background: #e10600;"></span> Bus 26 (Live GPS)<br>
+    <span class="dot" style="background: #ef7b10;"></span> Overground (At Station)<br>
+    <span class="dot" style="background: #9364cc;"></span> Elizabeth Line (At Station)
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // Focused on the H&I -> Shoreditch -> City corridor
+    const map = L.map('map', { zoomControl: false }).setView([51.53, -0.08], 14);
+
+    // Using a "Muted" map style to let the colored dots pop
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png').addTo(map);
+
+    const transportLayer = L.layerGroup().addTo(map);
+
+    async function updateMap() {
+        transportLayer.clearLayers();
+        
+        // Fetch Bus 26 - Actual GPS
+        fetchBus('26', '#e10600');
+        
+        // Fetch Trains - Station Anchored
+        fetchTrain('london-overground', '#ef7b10');
+        fetchTrain('elizabeth', '#9364cc');
+    }
+
+    async function fetchBus(lineId, color) {
+        try {
+            const res = await fetch(`https://api.tfl.gov.uk/Vehicle/Mode/bus?lineId=${lineId}`);
+            const data = await res.json();
+            data.forEach(bus => {
+                if (bus.lat && bus.lon) {
+                    L.circleMarker([bus.lat, bus.lon], {
+                        radius: 7, fillColor: color, color: "#000", weight: 2, fillOpacity: 0.9
+                    }).addTo(transportLayer).bindTooltip(`Bus ${lineId} to ${bus.destinationName}`);
+                }
+            });
+        } catch (e) { console.error(e); }
+    }
+
+    async function fetchTrain(mode, color) {
+        try {
+            const res = await fetch(`https://api.tfl.gov.uk/Line/${mode}/Arrivals`);
+            const data = await res.json();
+            
+            // We only want to show one dot per unique Train ID
+            const seenTrains = new Set();
+            
+            data.forEach(train => {
+                if (!seenTrains.has(train.vehicleId) && train.naptanId) {
+                    seenTrains.add(train.vehicleId);
+                    // Trains are placed at the station they are currently at or approaching
+                    L.circleMarker([train.latitude, train.longitude], {
+                        radius: 10, fillColor: color, color: "#fff", weight: 3, fillOpacity: 1
+                    }).addTo(transportLayer).bindTooltip(`${mode.toUpperCase()}: ${train.currentLocation}`);
+                }
+            });
+        } catch (e) { console.error(e); }
+    }
+
+    // Update every 20 seconds for that "moving" feel
+    setInterval(updateMap, 20000);
+    updateMap();
+</script>
+</body>
+</html>
