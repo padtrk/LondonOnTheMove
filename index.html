@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Marauder's Map — Route 26</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root {
+    --ink: #2b1810;
+    --parchment: #e8dcc0;
+    --bus: #8b0000;
+    --bus-glow: rgba(139, 0, 0, 0.45);
+    --stop: #5a3a1a;
+  }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--parchment);
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink);
+  }
+
+  #header {
+    position: absolute; top: 0; left: 0; right: 0;
+    z-index: 1000;
+    padding: 10px 16px;
+    background: linear-gradient(to bottom, rgba(232, 220, 192, 0.95), rgba(232, 220, 192, 0.7) 80%, transparent);
+    pointer-events: none;
+  }
+  #title {
+    font-style: italic; font-size: 22px; font-weight: normal;
+    letter-spacing: 0.5px; margin: 0;
+  }
+  #subtitle {
+    font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    margin: 2px 0 0 0; opacity: 0.7;
+  }
+
+  #status {
+    position: absolute; bottom: 10px; left: 10px;
+    z-index: 1000;
+    background: rgba(232, 220, 192, 0.9);
+    border: 1px solid var(--ink);
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: 'Courier New', monospace;
+    max-width: 280px;
+  }
+
+  #map {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--parchment);
+  }
+
+  .leaflet-tile-pane {
+    filter: sepia(0.6) saturate(0.7) brightness(0.95) contrast(0.9);
+  }
+
+  .stop-marker {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--stop);
+    border: 1px solid var(--ink);
+    opacity: 0.6;
+  }
+
+  .bus-marker {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--bus);
+    border: 2px solid var(--ink);
+    box-shadow: 0 0 12px 4px var(--bus-glow);
+    position: relative;
+  }
+
+  .bus-label {
+    position: absolute; top: -22px; left: 50%;
+    transform: translateX(-50%);
+    font-style: italic; font-size: 11px;
+    color: var(--ink);
+    background: rgba(232, 220, 192, 0.9);
+    padding: 1px 5px; white-space: nowrap;
+    border: 1px solid var(--ink);
+    pointer-events: none;
+  }
+
+  .leaflet-container { background: var(--parchment); }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1 id="title">The Marauder's Map</h1>
+  <p id="subtitle">Route 26 &middot; Hackney Wick &#8652; Waterloo</p>
+</div>
+
+<div id="map"></div>
+<div id="status">Initialising&hellip;</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // --- Config ---
+  const LINE_ID = '26';
+  const REFRESH_MS = 20000;
+  // Assumed average seconds between stops in central London.
+  // Used to place a bus between its previous and next stop.
+  // If buses look stuck near their next stop, raise this;
+  // if they jump to each next stop too early, lower it.
+  const TYPICAL_INTER_STOP_SECONDS = 75;
+
+  const statusEl = document.getElementById('status');
+  function log(msg) {
+    statusEl.textContent = msg;
+    console.log('[bus26]', msg);
+  }
+
+  // --- Map setup ---
+  const map = L.map('map', { zoomControl: true }).setView([51.52, -0.08], 12);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap &middot; Live data &copy; TfL'
+  }).addTo(map);
+
+  // --- State ---
+  const stopsById = {};       // id -> { lat, lon, name }
+  let outboundSequence = [];  // ordered stop ids
+  let inboundSequence = [];
+  const busMarkers = {};      // vehicleId -> Leaflet marker
+
+  // --- Load route geometry + stops (one-off) ---
+  async function loadRoute() {
+    log('Loading route 26 geometry…');
+
+    const outUrl = `https://api.tfl.gov.uk/Line/${LINE_ID}/Route/Sequence/outbound?serviceTypes=Regular,Night&excludeCrowding=true`;
+    const inUrl  = `https://api.tfl.gov.uk/Line/${LINE_ID}/Route/Sequence/inbound?serviceTypes=Regular,Night&excludeCrowding=true`;
+
+    const [outRes, inRes] = await Promise.all([
+      fetch(outUrl).then(r => r.json()),
+      fetch(inUrl).then(r => r.json())
+    ]);
+
+    ingestSequence(outRes, 'outbound');
+    ingestSequence(inRes,  'inbound');
+
+    drawRouteLines(outRes);
+    drawRouteLines(inRes);
+    drawStops();
+
+    const allCoords = Object.values(stopsById).map(s => [s.lat, s.lon]);
+    if (allCoords.length) map.fitBounds(allCoords, { padding: [40, 40] });
+    log(`Route loaded · ${Object.keys(stopsById).length} stops`);
+  }
+
+  function ingestSequence(data, direction) {
+    const sequences = data.stopPointSequences || [];
+    const seq = [];
+    sequences.forEach(branch => {
+      (branch.stopPoint || []).forEach(sp => {
+        if (!stopsById[sp.id]) {
+          stopsById[sp.id] = { lat: sp.lat, lon: sp.lon, name: sp.name };
+        }
+        seq.push(sp.id);
+      });
+    });
+    if (direction === 'outbound') outboundSequence = seq;
+    else inboundSequence = seq;
+  }
+
+  function drawRouteLines(data) {
+    // lineStrings is an array of stringified JSON arrays of [lon, lat] pairs
+    (data.lineStrings || []).forEach(ls => {
+      try {
+        const coords = JSON.parse(ls);
+        const latlngs = coords.map(([lon, lat]) => [lat, lon]);
+        L.polyline(latlngs, {
+          color: '#2b1810', weight: 2.5, opacity: 0.55, dashArray: '6, 4'
+        }).addTo(map);
+      } catch (e) {
+        console.warn('Could not parse lineString', e);
+      }
+    });
+  }
+
+  function drawStops() {
+    Object.values(stopsById).forEach(s => {
+      L.marker([s.lat, s.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="stop-marker"></div>',
+          iconSize: [10, 10],
+          iconAnchor: [5, 5]
+        }),
+        title: s.name,
+        keyboard: false
+      }).addTo(map);
+    });
+  }
+
+  // --- Load live arrivals, group by vehicle, infer positions ---
+  async function loadArrivals() {
+    try {
+      const url = `https://api.tfl.gov.uk/Line/${LINE_ID}/Arrivals`;
+      const arrivals = await fetch(url).then(r => r.json());
+
+      // Each arrival: { vehicleId, naptanId, timeToStation, direction, ... }
+      const byVehicle = {};
+      arrivals.forEach(a => {
+        if (!a.vehicleId) return;
+        (byVehicle[a.vehicleId] = byVehicle[a.vehicleId] || []).push(a);
+      });
+
+      const seen = new Set();
+
+      Object.entries(byVehicle).forEach(([vehicleId, list]) => {
+        list.sort((a, b) => a.timeToStation - b.timeToStation);
+        const next = list[0];
+        const nextStop = stopsById[next.naptanId];
+        if (!nextStop) return;
+
+        const seq = next.direction === 'inbound' ? inboundSequence : outboundSequence;
+        const idx = seq.indexOf(next.naptanId);
+        const prevStop = idx > 0 ? stopsById[seq[idx - 1]] : null;
+
+        // Interpolate along the leg from prevStop to nextStop
+        let lat, lon;
+        if (prevStop) {
+          const t = Math.max(0, next.timeToStation);
+          const frac = Math.max(0, Math.min(1, (TYPICAL_INTER_STOP_SECONDS - t) / TYPICAL_INTER_STOP_SECONDS));
+          lat = prevStop.lat + (nextStop.lat - prevStop.lat) * frac;
+          lon = prevStop.lon + (nextStop.lon - prevStop.lon) * frac;
+        } else {
+          lat = nextStop.lat;
+          lon = nextStop.lon;
+        }
+
+        seen.add(vehicleId);
+
+        const labelText = `Bus ${vehicleId.slice(-4)} → ${shortName(nextStop.name)}`;
+
+        if (busMarkers[vehicleId]) {
+          busMarkers[vehicleId].setLatLng([lat, lon]);
+          const el = busMarkers[vehicleId].getElement();
+          const lbl = el && el.querySelector('.bus-label');
+          if (lbl) lbl.textContent = labelText;
+        } else {
+          const html = `<div class="bus-marker"><div class="bus-label">${labelText}</div></div>`;
+          busMarkers[vehicleId] = L.marker([lat, lon], {
+            icon: L.divIcon({
+              className: '',
+              html: html,
+              iconSize: [18, 18],
+              iconAnchor: [9, 9]
+            }),
+            title: labelText,
+            zIndexOffset: 1000
+          }).addTo(map);
+        }
+      });
+
+      // Remove markers for vehicles no longer in the feed
+      Object.keys(busMarkers).forEach(vid => {
+        if (!seen.has(vid)) {
+          map.removeLayer(busMarkers[vid]);
+          delete busMarkers[vid];
+        }
+      });
+
+      const now = new Date().toLocaleTimeString('en-GB');
+      log(`${seen.size} buses · updated ${now}`);
+    } catch (err) {
+      console.error(err);
+      log('Error fetching arrivals — retrying…');
+    }
+  }
+
+  function shortName(name) {
+    return name.replace(' Bus Stop', '').replace(/ \(Stop [A-Z0-9]+\)$/, '');
+  }
+
+  // --- Boot ---
+  (async function init() {
+    try {
+      await loadRoute();
+      await loadArrivals();
+      setInterval(loadArrivals, REFRESH_MS);
+    } catch (err) {
+      console.error(err);
+      log('Failed to initialise: ' + err.message);
+    }
+  })();
+})();
+</script>
+</body>
+</html>
