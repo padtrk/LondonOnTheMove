@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Marauder's Map — London Buses</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=IM+Fell+English:ital@0;1&family=Cinzel:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root {
+    --p0: #1a0f00;          /* deepest ink */
+    --p1: #2d1a00;          /* dark sepia */
+    --p2: #5c3d1e;          /* mid sepia */
+    --p3: #8b6914;          /* warm brown */
+    --p4: #b8924a;          /* parchment mid */
+    --p5: #d4b483;          /* parchment light */
+    --p6: #e8d5a3;          /* parchment pale */
+    --p7: #f2e8c8;          /* parchment highlight */
+    --seal:      #6b1414;
+    --seal-dark: #3d0a0a;
+    --seal-gold: #c8960c;
+    --gryff-r:   #8b0000;
+    --gryff-g:   #b8860b;
+    --slyth-g:   #1a4d2e;
+    --slyth-s:   #6b8f71;
+    --raven-b:   #0a1f5c;
+    --raven-br:  #7a4f00;
+    --stop-y:    #e6b800;
+    --stop-b:    #5c4400;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%; overflow: hidden;
+    background: var(--p1);
+    font-family: 'IM Fell English', Georgia, serif;
+    color: var(--p0);
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='3' fill='%235c3d1e' opacity='0.7'/%3E%3C/svg%3E") 10 10, crosshair;
+  }
+
+  /* ═══ MAP ═══════════════════════════════════════════ */
+  #map {
+    position: absolute; inset: 0;
+    background: var(--p6);
+  }
+
+  .leaflet-tile-pane {
+    filter: sepia(0.9) saturate(0.4) brightness(0.82) contrast(0.85) hue-rotate(10deg);
+  }
+
+  .leaflet-container { background: var(--p6); }
+  .leaflet-control-zoom a {
+    background: var(--p6) !important;
+    color: var(--p0) !important;
+    border-color: var(--p2) !important;
+    font-family: 'IM Fell English', serif !important;
+  }
+
+  /* ═══ PARCHMENT TEXTURE OVERLAY ═════════════════════ */
+  #texture {
+    position: absolute; inset: 0; z-index: 500;
+    pointer-events: none;
+    background-image:
+      /* foxing spots */
+      radial-gradient(ellipse 3px 4px at 12% 23%, rgba(90,50,10,0.18) 0%, transparent 100%),
+      radial-gradient(ellipse 5px 3px at 34% 67%, rgba(80,40,5,0.12) 0%, transparent 100%),
+      radial-gradient(ellipse 2px 3px at 58% 14%, rgba(100,60,10,0.15) 0%, transparent 100%),
+      radial-gradient(ellipse 4px 2px at 78% 82%, rgba(70,35,5,0.14) 0%, transparent 100%),
+      radial-gradient(ellipse 3px 5px at 89% 41%, rgba(90,50,10,0.10) 0%, transparent 100%),
+      radial-gradient(ellipse 6px 3px at 22% 88%, rgba(80,45,8,0.12) 0%, transparent 100%),
+      radial-gradient(ellipse 2px 4px at 67% 55%, rgba(60,30,5,0.09) 0%, transparent 100%),
+      radial-gradient(ellipse 4px 3px at 45% 33%, rgba(100,55,10,0.11) 0%, transparent 100%),
+      /* vignette */
+      radial-gradient(ellipse 100% 100% at 50% 50%, transparent 40%, rgba(26,15,0,0.45) 100%);
+    mix-blend-mode: multiply;
+  }
+
+  /* ═══ FOLD LINES ═════════════════════════════════════ */
+  #folds {
+    position: absolute; inset: 0; z-index: 501;
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(
+        90deg,
+        transparent 0px,
+        transparent calc(12.5% - 1px),
+        rgba(232,213,163,0.22) calc(12.5% - 1px),
+        rgba(232,213,163,0.22) calc(12.5% + 0.5px),
+        rgba(26,15,0,0.08) calc(12.5% + 0.5px),
+        rgba(26,15,0,0.08) calc(12.5% + 1.5px),
+        transparent calc(12.5% + 1.5px)
+      );
+  }
+
+  /* ═══ LATIN BORDER TEXT ══════════════════════════════ */
+  .border-text {
+    position: absolute; z-index: 502;
+    pointer-events: none;
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 3.5px;
+    color: var(--p2);
+    opacity: 0.55;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  #border-top    { top: 2px;    left: 0; right: 0; text-align: center; }
+  #border-bottom { bottom: 2px; left: 0; right: 0; text-align: center; }
+
+  /* ═══ CARTOUCHE / TITLE SEAL ════════════════════════ */
+  #cartouche {
+    position: absolute;
+    top: 14px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  #seal-svg {
+    width: 160px;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
+  }
+
+  #seal-text {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+    width: 120px;
+  }
+
+  #seal-main {
+    font-family: 'UnifrakturMaguntia', cursive;
+    font-size: 13px;
+    color: var(--p7);
+    line-height: 1.2;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    display: block;
+  }
+
+  #seal-sub {
+    font-family: 'Cinzel', serif;
+    font-size: 7.5px;
+    letter-spacing: 1px;
+    color: var(--seal-gold);
+    display: block;
+    margin-top: 2px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+  }
+
+  /* ═══ ROUTE SELECTOR ════════════════════════════════ */
+  #selector-wrap {
+    position: absolute;
+    top: 14px; left: 14px;
+    z-index: 1001;
+  }
+
+  #selector-label {
+    font-family: 'Cinzel', serif;
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: var(--p5);
+    opacity: 0.8;
+    display: block;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  #route-select {
+    font-family: 'UnifrakturMaguntia', cursive;
+    font-size: 18px;
+    color: var(--p7);
+    background: var(--seal-dark);
+    border: 1.5px solid var(--p3);
+    padding: 6px 12px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+    min-width: 120px;
+    text-align: center;
+    box-shadow:
+      inset 0 1px 3px rgba(0,0,0,0.6),
+      0 2px 6px rgba(0,0,0,0.5),
+      0 0 0 1px var(--p1);
+    letter-spacing: 1px;
+  }
+
+  #route-select option {
+    background: var(--seal-dark);
+    font-size: 16px;
+  }
+
+  #route-select:hover { border-color: var(--seal-gold); }
+
+  /* ═══ STATS PANEL ═══════════════════════════════════ */
+  #stats {
+    position: absolute;
+    bottom: 28px; left: 14px;
+    z-index: 1000;
+    background: linear-gradient(135deg, rgba(44,26,4,0.94) 0%, rgba(26,15,0,0.96) 100%);
+    border: 1px solid var(--p3);
+    padding: 12px 16px;
+    min-width: 180px;
+    box-shadow:
+      inset 0 1px 0 rgba(184,146,74,0.15),
+      0 4px 16px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(0,0,0,0.3);
+  }
+
+  #stats::before {
+    content: '';
+    position: absolute; inset: 3px;
+    border: 1px solid rgba(184,146,74,0.12);
+    pointer-events: none;
+  }
+
+  .stats-head {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 2.5px;
+    color: var(--seal-gold);
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(184,146,74,0.25);
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 3px;
+  }
+
+  .stat-label {
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--p5);
+  }
+
+  .stat-val {
+    font-family: 'Cinzel', serif;
+    font-size: 14px;
+    color: var(--p7);
+    letter-spacing: 1px;
+  }
+
+  #updated {
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 9.5px;
+    color: var(--p4);
+    margin-top: 8px;
+    border-top: 1px solid rgba(184,146,74,0.15);
+    padding-top: 6px;
+    opacity: 0.8;
+  }
+
+  /* ═══ LEGEND ════════════════════════════════════════ */
+  #legend {
+    position: absolute;
+    bottom: 28px; right: 14px;
+    z-index: 1000;
+    background: linear-gradient(135deg, rgba(44,26,4,0.94) 0%, rgba(26,15,0,0.96) 100%);
+    border: 1px solid var(--p3);
+    padding: 12px 16px;
+    box-shadow:
+      inset 0 1px 0 rgba(184,146,74,0.15),
+      0 4px 16px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(0,0,0,0.3);
+  }
+
+  #legend::before {
+    content: '';
+    position: absolute; inset: 3px;
+    border: 1px solid rgba(184,146,74,0.12);
+    pointer-events: none;
+  }
+
+  .leg-head {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    letter-spacing: 2.5px;
+    color: var(--seal-gold);
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(184,146,74,0.25);
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+
+  .leg-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 5px;
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 11px;
+    color: var(--p5);
+  }
+
+  .leg-foot {
+    width: 12px; height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  /* footprint dots inside the bus marker */
+  .leg-foot::before, .leg-foot::after {
+    content: '';
+    position: absolute;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.35);
+  }
+  .leg-foot::before { top: 1px; left: 1px; }
+  .leg-foot::after  { bottom: 1px; right: 1px; }
+
+  .leg-sq {
+    width: 9px; height: 9px;
+    background: var(--stop-y);
+    border: 1.5px solid var(--stop-b);
+    flex-shrink: 0;
+  }
+
+  /* ═══ BUS MARKERS — footprint aesthetic ════════════ */
+  .bus-dot {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    border: 1.5px solid rgba(26,15,0,0.7);
+    position: relative;
+    transition: opacity 0.4s;
+  }
+
+  .bus-dot::before, .bus-dot::after {
+    content: '';
+    position: absolute;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.3);
+  }
+  .bus-dot::before { top: 1px; left: 1px; }
+  .bus-dot::after  { bottom: 1px; right: 1px; }
+
+  .bus-dot.stale { opacity: 0.25; }
+
+  /* route 26 — Gryffindor */
+  .r26-1 { background: var(--gryff-r); box-shadow: 0 0 7px 2px rgba(139,0,0,0.6), 0 0 3px 1px rgba(139,0,0,0.9) inset; }
+  .r26-2 { background: var(--gryff-g); box-shadow: 0 0 7px 2px rgba(184,134,11,0.6), 0 0 3px 1px rgba(184,134,11,0.9) inset; }
+
+  /* route 55 — Slytherin */
+  .r55-1 { background: var(--slyth-g); box-shadow: 0 0 7px 2px rgba(26,77,46,0.6), 0 0 3px 1px rgba(26,77,46,0.9) inset; }
+  .r55-2 { background: var(--slyth-s); box-shadow: 0 0 7px 2px rgba(107,143,113,0.6), 0 0 3px 1px rgba(107,143,113,0.9) inset; }
+
+  /* route 149 — Ravenclaw */
+  .r149-1 { background: var(--raven-b);  box-shadow: 0 0 7px 2px rgba(10,31,92,0.6), 0 0 3px 1px rgba(10,31,92,0.9) inset; }
+  .r149-2 { background: var(--raven-br); box-shadow: 0 0 7px 2px rgba(122,79,0,0.6), 0 0 3px 1px rgba(122,79,0,0.9) inset; }
+
+  /* ═══ STOP MARKERS ══════════════════════════════════ */
+  .stop-sq {
+    width: 7px; height: 7px;
+    background: var(--stop-y);
+    border: 1px solid var(--stop-b);
+    opacity: 0.8;
+  }
+
+  /* ═══ INCANTATION ═══════════════════════════════════ */
+  #incantation {
+    position: absolute;
+    bottom: 6px; right: 14px;
+    z-index: 1001;
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 8.5px;
+    color: var(--p4);
+    opacity: 0.5;
+    pointer-events: none;
+    letter-spacing: 0.8px;
+  }
+
+  /* ═══ ATTRIBUTION ═══════════════════════════════════ */
+  #attribution {
+    position: absolute;
+    bottom: 6px; left: 14px;
+    z-index: 1001;
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 8px;
+    color: var(--p4);
+    opacity: 0.45;
+    pointer-events: none;
+    letter-spacing: 0.3px;
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Texture + folds -->
+<div id="texture"></div>
+<div id="folds"></div>
+
+<!-- Latin border text -->
+<div class="border-text" id="border-top">
+  OMNIBVS · MAVDENTIBVS · BONVM · AVDERE · EST · MAR · OMNIBVS · MAVDENTIBVS · BONVM · MAVDERE · EST · AVDERE · OMNIBVS · MAVDENTIBVS · BONVM · AVDERE · EST · MAR
+</div>
+<div class="border-text" id="border-bottom">
+  EST · MAR · AVDERE · BONVM · MAVDENTIBVS · OMNIBVS · EST · MAR · AVDERE · BONVM · MAVDENTIBVS · OMNIBVS · EST · MAR · AVDERE · BONVM · MAVDENTIBVS · OMNIBVS
+</div>
+
+<!-- Wax seal cartouche -->
+<div id="cartouche">
+  <svg id="seal-svg" viewBox="0 0 160 120" xmlns="http://www.w3.org/2000/svg">
+    <!-- outer decorative ring -->
+    <ellipse cx="80" cy="60" rx="78" ry="57" fill="none" stroke="#5c3d1e" stroke-width="1" opacity="0.4"/>
+    <!-- scroll top -->
+    <path d="M30,18 Q80,4 130,18 Q110,26 80,22 Q50,26 30,18Z" fill="#3d1a00" stroke="#8b6914" stroke-width="0.8"/>
+    <path d="M38,16 Q80,6 122,16" fill="none" stroke="#c8960c" stroke-width="0.5" opacity="0.6"/>
+    <!-- main seal diamond -->
+    <path d="M80,10 L148,60 L80,110 L12,60 Z" fill="#5c1010" stroke="#8b6914" stroke-width="1.2"/>
+    <path d="M80,16 L142,60 L80,104 L18,60 Z" fill="#6b1414" stroke="none"/>
+    <path d="M80,20 L138,60 L80,100 L22,60 Z" fill="none" stroke="#c8960c" stroke-width="0.6" opacity="0.5"/>
+    <!-- inner decorative lines -->
+    <path d="M80,28 L130,60 L80,92 L30,60 Z" fill="none" stroke="#8b6914" stroke-width="0.4" opacity="0.4"/>
+    <!-- corner flourishes -->
+    <circle cx="80" cy="10"  r="2.5" fill="#c8960c" opacity="0.8"/>
+    <circle cx="148" cy="60" r="2.5" fill="#c8960c" opacity="0.8"/>
+    <circle cx="80" cy="110" r="2.5" fill="#c8960c" opacity="0.8"/>
+    <circle cx="12"  cy="60" r="2.5" fill="#c8960c" opacity="0.8"/>
+    <!-- scroll ribbon at bottom -->
+    <path d="M25,95 Q80,108 135,95 Q115,103 80,100 Q45,103 25,95Z" fill="#3d1a00" stroke="#8b6914" stroke-width="0.8"/>
+  </svg>
+  <div id="seal-text">
+    <span id="seal-main">The Marauder's Map</span>
+    <span id="seal-sub">LONDON OMNIBVS</span>
+  </div>
+</div>
+
+<!-- Route selector -->
+<div id="selector-wrap">
+  <span id="selector-label">Consult the Map</span>
+  <select id="route-select">
+    <option value="26">Route XXVI</option>
+    <option value="55">Route LV</option>
+    <option value="149">Route CXLIX</option>
+  </select>
+</div>
+
+<!-- Stats -->
+<div id="stats">
+  <div class="stats-head">Positions Known</div>
+  <div class="stat-row">
+    <span class="stat-label">Active</span>
+    <span class="stat-val" id="s-active">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">In Garage</span>
+    <span class="stat-val" id="s-stale">—</span>
+  </div>
+  <div id="updated">Consulting the oracle…</div>
+</div>
+
+<!-- Legend -->
+<div id="legend">
+  <div class="leg-head">The Key</div>
+  <div id="legend-body"></div>
+</div>
+
+<div id="attribution">Paddy Evans · padtrk · patrickevanswork@gmail.com · © BODS / TfL / OpenStreetMap</div>
+<div id="incantation">I solemnly swear that I am up to no good</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const WORKER_URL  = 'https://workers-playground-white-meadow-b853.patrickevanswork.workers.dev/';
+  const REFRESH_MS  = 15000;
+  const STALE_SECS  = 180;
+  const STOP_ZOOM   = 14;
+
+  const ROUTES = {
+    '26': {
+      label: 'Route XXVI',
+      terminus: ['→ Victoria', '→ Hackney Wick'],
+      dir1Class: 'r26-1', dir2Class: 'r26-2',
+      dir1Colour: '#8b0000', dir2Colour: '#b8860b',
+      lineCol1: '#8b0000',   lineCol2: '#b8860b',
+      tflId: '26',
+    },
+    '55': {
+      label: 'Route LV',
+      terminus: ['→ Oxford Circus', '→ Walthamstow'],
+      dir1Class: 'r55-1', dir2Class: 'r55-2',
+      dir1Colour: '#1a4d2e', dir2Colour: '#6b8f71',
+      lineCol1: '#1a4d2e',   lineCol2: '#6b8f71',
+      tflId: '55',
+    },
+    '149': {
+      label: 'Route CXLIX',
+      terminus: ['→ London Bridge', '→ Edmonton Green'],
+      dir1Class: 'r149-1', dir2Class: 'r149-2',
+      dir1Colour: '#0a1f5c', dir2Colour: '#7a4f00',
+      lineCol1: '#0a1f5c',   lineCol2: '#7a4f00',
+      tflId: '149',
+    },
+  };
+
+  let activeRoute  = '26';
+  let allVehicles  = [];
+  let busMarkers   = {};
+  let routeLines   = [];
+  let stopMarkers  = [];
+  let stopsData    = {};
+  let stopsLoaded  = {};
+
+  // ── Map ──────────────────────────────────────────────
+  const map = L.map('map', {
+    zoomControl: true,
+    attributionControl: false,
+  }).setView([51.52, -0.09], 12);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+  }).addTo(map);
+
+  // ── Legend ───────────────────────────────────────────
+  function buildLegend(route) {
+    const cfg  = ROUTES[route];
+    const body = document.getElementById('legend-body');
+    body.innerHTML = `
+      <div class="leg-row">
+        <span class="leg-foot" style="background:${cfg.dir1Colour}"></span>
+        ${cfg.terminus[0]}
+      </div>
+      <div class="leg-row">
+        <span class="leg-foot" style="background:${cfg.dir2Colour}"></span>
+        ${cfg.terminus[1]}
+      </div>
+      <div class="leg-row">
+        <span class="leg-sq"></span>
+        Bus stop
+      </div>
+    `;
+  }
+
+  // ── Route lines ──────────────────────────────────────
+  function clearRouteLines() {
+    routeLines.forEach(l => map.removeLayer(l));
+    routeLines = [];
+  }
+
+  async function loadRoute(routeId) {
+    clearRouteLines();
+    const cfg = ROUTES[routeId];
+
+    const [outRes, inRes] = await Promise.all([
+      fetch(`https://api.tfl.gov.uk/Line/${cfg.tflId}/Route/Sequence/outbound?serviceTypes=Regular&excludeCrowding=true`).then(r => r.json()),
+      fetch(`https://api.tfl.gov.uk/Line/${cfg.tflId}/Route/Sequence/inbound?serviceTypes=Regular&excludeCrowding=true`).then(r => r.json()),
+    ]);
+
+    drawLines(outRes, cfg.lineCol1);
+    drawLines(inRes,  cfg.lineCol2);
+
+    if (!stopsLoaded[routeId]) {
+      stopsData[routeId] = {};
+      ingestStops(outRes, routeId);
+      ingestStops(inRes,  routeId);
+      stopsLoaded[routeId] = true;
+    }
+
+    redrawStops();
+
+    const allCoords = Object.values(stopsData[routeId]).map(s => [s.lat, s.lon]);
+    if (allCoords.length) map.fitBounds(allCoords, { padding: [60, 60] });
+  }
+
+  function drawLines(data, colour) {
+    (data.lineStrings || []).forEach(ls => {
+      try {
+        const coords  = JSON.parse(ls);
+        const latlngs = coords.map(([lon, lat]) => [lat, lon]);
+        const l = L.polyline(latlngs, {
+          color: colour, weight: 2, opacity: 0.5, dashArray: '8 5',
+        }).addTo(map);
+        routeLines.push(l);
+      } catch (e) {}
+    });
+  }
+
+  function ingestStops(data, routeId) {
+    (data.stopPointSequences || []).forEach(branch => {
+      (branch.stopPoint || []).forEach(sp => {
+        if (!stopsData[routeId][sp.id]) {
+          stopsData[routeId][sp.id] = { lat: sp.lat, lon: sp.lon, name: sp.name };
+        }
+      });
+    });
+  }
+
+  // ── Stop markers ─────────────────────────────────────
+  function clearStops() {
+    stopMarkers.forEach(m => map.removeLayer(m));
+    stopMarkers = [];
+  }
+
+  function redrawStops() {
+    clearStops();
+    if (!stopsLoaded[activeRoute]) return;
+    if (map.getZoom() < STOP_ZOOM) return;
+    Object.values(stopsData[activeRoute]).forEach(s => {
+      const m = L.marker([s.lat, s.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="stop-sq"></div>',
+          iconSize: [9, 9],
+          iconAnchor: [4, 4],
+        }),
+        title: s.name,
+        keyboard: false,
+        zIndexOffset: 0,
+      }).addTo(map);
+      stopMarkers.push(m);
+    });
+  }
+
+  map.on('zoomend', redrawStops);
+
+  // ── Bus markers ──────────────────────────────────────
+  function clearBusMarkers() {
+    Object.values(busMarkers).forEach(m => map.removeLayer(m));
+    busMarkers = {};
+  }
+
+  function renderVehicles() {
+    const cfg   = ROUTES[activeRoute];
+    const now   = Date.now();
+    const shown = allVehicles.filter(v => v.route === activeRoute);
+    const seen  = new Set();
+    let active  = 0, stale = 0;
+
+    shown.forEach(v => {
+      if (!isFinite(v.lat) || !isFinite(v.lon)) return;
+      if (v.lat === 0 && v.lon === 0) return;
+
+      const id     = v.vehicleRef;
+      seen.add(id);
+
+      const ageSec  = Math.max(0, (now - new Date(v.recordedAt).getTime()) / 1000);
+      const isStale = ageSec > STALE_SECS;
+      isStale ? stale++ : active++;
+
+      const dirCls = v.directionRef === '1' ? cfg.dir1Class : cfg.dir2Class;
+      const cls    = `bus-dot ${dirCls}${isStale ? ' stale' : ''}`;
+      const dest   = (v.destinationName || '').replace(/_/g, ' ').trim() || '—';
+      const title  = `${v.route} · ${v.vehicleRef} → ${dest}`;
+
+      if (busMarkers[id]) {
+        busMarkers[id].setLatLng([v.lat, v.lon]);
+        const el  = busMarkers[id].getElement();
+        const dot = el && el.querySelector('.bus-dot');
+        if (dot) dot.className = cls;
+      } else {
+        busMarkers[id] = L.marker([v.lat, v.lon], {
+          icon: L.divIcon({
+            className: '',
+            html: `<div class="${cls}"></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          }),
+          title,
+          zIndexOffset: 1000,
+        }).addTo(map);
+      }
+    });
+
+    Object.keys(busMarkers).forEach(id => {
+      if (!seen.has(id)) { map.removeLayer(busMarkers[id]); delete busMarkers[id]; }
+    });
+
+    document.getElementById('s-active').textContent = active;
+    document.getElementById('s-stale').textContent  = stale;
+    document.getElementById('updated').textContent  =
+      'Observed: ' + new Date().toLocaleTimeString('en-GB');
+  }
+
+  // ── Worker fetch ─────────────────────────────────────
+  async function fetchVehicles() {
+    try {
+      const res  = await fetch(WORKER_URL);
+      if (!res.ok) throw new Error('worker ' + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      allVehicles = data.vehicles || [];
+      renderVehicles();
+    } catch (err) {
+      console.error('[marauder]', err);
+      document.getElementById('updated').textContent = 'The map has gone dark…';
+    }
+  }
+
+  // ── Route switch ─────────────────────────────────────
+  async function switchRoute(routeId) {
+    activeRoute = routeId;
+    clearBusMarkers();
+    buildLegend(routeId);
+    document.getElementById('s-active').textContent = '—';
+    document.getElementById('s-stale').textContent  = '—';
+    document.getElementById('updated').textContent  = 'Consulting the oracle…';
+    await loadRoute(routeId);
+    renderVehicles();
+  }
+
+  document.getElementById('route-select').addEventListener('change', e => switchRoute(e.target.value));
+
+  // ── Init ─────────────────────────────────────────────
+  (async function init() {
+    buildLegend(activeRoute);
+    await switchRoute(activeRoute);
+    await fetchVehicles();
+    setInterval(fetchVehicles, REFRESH_MS);
+  })();
+
+})();
+</script>
+</body>
+</html>
